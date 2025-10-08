@@ -62,48 +62,55 @@ export async function GET(req: Request) {
     // Fetch texttrack content for each video
     const videosWithTexttracks = await Promise.all(
       data.data.map(async (video: any) => {
-        if (!video.texttracks || video.texttracks.data.length === 0) {
-          return { ...video, texttrack_content: null };
-        }
+        // Extract video ID from URI (e.g., "/videos/1069079859" -> "1069079859")
+        const videoId = video.uri.split('/').pop();
 
-        // Fetch each texttrack's content
-        const texttracksWithContent = await Promise.all(
-          video.texttracks.data.map(async (track: any) => {
-            try {
-              const trackResponse = await fetch(`https://api.vimeo.com${track.uri}`, {
-                headers: {
-                  Authorization: `Bearer ${VIMEO_TOKEN}`,
-                  Accept: "application/vnd.vimeo.*+json;version=3.4",
-                },
-              });
+        try {
+          // Fetch texttracks for this video
+          const texttrackResponse = await fetch(`https://api.vimeo.com/videos/${videoId}/texttracks`, {
+            headers: {
+              Authorization: `Bearer ${VIMEO_TOKEN}`,
+              Accept: "application/vnd.vimeo.*+json;version=3.4",
+            },
+          });
 
-              if (!trackResponse.ok) {
-                return { ...track, content: null, error: "Failed to fetch content" };
-              }
+          if (!texttrackResponse.ok) {
+            return { ...video, texttracks: null, error: "Failed to fetch texttracks" };
+          }
 
-              const trackData = await trackResponse.json();
+          const texttrackData = await texttrackResponse.json();
 
-              // Also fetch the actual VTT/SRT content if link exists
-              let vttContent = null;
-              if (trackData.link) {
-                const vttResponse = await fetch(trackData.link);
-                if (vttResponse.ok) {
-                  vttContent = await vttResponse.text();
+          if (!texttrackData.data || texttrackData.data.length === 0) {
+            return { ...video, texttracks: { data: [] } };
+          }
+
+          // Fetch each texttrack's content
+          const texttracksWithContent = await Promise.all(
+            texttrackData.data.map(async (track: any) => {
+              try {
+                // Fetch the actual VTT/SRT content if link exists
+                let vttContent = null;
+                if (track.link) {
+                  const vttResponse = await fetch(track.link);
+                  if (vttResponse.ok) {
+                    vttContent = await vttResponse.text();
+                  }
                 }
+
+                return {
+                  ...track,
+                  vtt_content: vttContent
+                };
+              } catch (err) {
+                return { ...track, vtt_content: null, error: "Error fetching track content" };
               }
+            })
+          );
 
-              return {
-                ...track,
-                metadata: trackData,
-                vtt_content: vttContent
-              };
-            } catch (err) {
-              return { ...track, content: null, error: "Error fetching track" };
-            }
-          })
-        );
-
-        return { ...video, texttracks: { data: texttracksWithContent } };
+          return { ...video, texttracks: { data: texttracksWithContent } };
+        } catch (err) {
+          return { ...video, texttracks: null, error: "Error fetching texttracks" };
+        }
       })
     );
 
