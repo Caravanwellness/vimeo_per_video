@@ -59,9 +59,60 @@ export async function GET(req: Request) {
 
     const data = await r.json();
 
+    // Fetch texttrack content for each video
+    const videosWithTexttracks = await Promise.all(
+      data.data.map(async (video: any) => {
+        if (!video.texttracks || video.texttracks.data.length === 0) {
+          return { ...video, texttrack_content: null };
+        }
+
+        // Fetch each texttrack's content
+        const texttracksWithContent = await Promise.all(
+          video.texttracks.data.map(async (track: any) => {
+            try {
+              const trackResponse = await fetch(`https://api.vimeo.com${track.uri}`, {
+                headers: {
+                  Authorization: `Bearer ${VIMEO_TOKEN}`,
+                  Accept: "application/vnd.vimeo.*+json;version=3.4",
+                },
+              });
+
+              if (!trackResponse.ok) {
+                return { ...track, content: null, error: "Failed to fetch content" };
+              }
+
+              const trackData = await trackResponse.json();
+
+              // Also fetch the actual VTT/SRT content if link exists
+              let vttContent = null;
+              if (trackData.link) {
+                const vttResponse = await fetch(trackData.link);
+                if (vttResponse.ok) {
+                  vttContent = await vttResponse.text();
+                }
+              }
+
+              return {
+                ...track,
+                metadata: trackData,
+                vtt_content: vttContent
+              };
+            } catch (err) {
+              return { ...track, content: null, error: "Error fetching track" };
+            }
+          })
+        );
+
+        return { ...video, texttracks: { data: texttracksWithContent } };
+      })
+    );
+
     return NextResponse.json({
       success: true,
-      data: data
+      data: {
+        ...data,
+        data: videosWithTexttracks
+      }
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
